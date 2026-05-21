@@ -1,0 +1,23 @@
+# Claude Code local state
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+
+# macOS
+.DS_Store
+
+# Pipeline outputs (large; should not be committed)
+data/
+
+# Raw dataset (large)
+*.zip
+twitteraae_all
+
+# HuggingFace model cache (if pointed inside repo)
+.cache/
