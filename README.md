@@ -12,9 +12,13 @@ TwitterAAE corpus ──▶ [1] AAE filter ──▶ [2] NSFW detector ──▶
 
 1. **Load** — reads the TwitterAAE TSV (Blodgett et al. 2016), keeps rows with
    high AAE posterior (default `>= 0.8`).
-2. **Detect** — runs a local DistilBERT NSFW text classifier (default:
-   [`michellejieli/NSFW_text_classifier`](https://huggingface.co/michellejieli/NSFW_text_classifier))
-   over the AAVE rows and keeps those scoring above the threshold.
+2. **Detect** — runs a local multi-label moderation model (default:
+   [`unitary/unbiased-toxic-roberta`](https://huggingface.co/unitary/unbiased-toxic-roberta),
+   the Detoxify "unbiased" checkpoint) over the AAVE rows and keeps
+   those whose `sexual_explicit` probability is above the threshold.
+   Filtering on `sexual_explicit` specifically (rather than a combined
+   NSFW label) prevents profanity, slurs, and AAVE features from being
+   flagged on their own.
 3. **Translate** — rewrites each AAVE row into Standard American English with
    a local LLM via [Ollama](https://ollama.com) (default: `llama3.3:70b`; use
    `--ollama-model llama3.1:8b` on laptops). The prompt instructs the model to
@@ -43,7 +47,7 @@ ollama pull llama3.3:70b
 ollama pull llama3.1:8b
 ```
 
-The first run will also download the DistilBERT NSFW classifier (~250 MB) from
+The first run will also download the Detoxify moderation model (~500 MB) from
 HuggingFace into the local cache.
 
 ## Usage
@@ -72,8 +76,8 @@ Useful flags:
 |---|---|---|
 | `--aae-threshold` | `0.8` | Min posterior probability for the AAE topic |
 | `--sample` | (none) | Random subsample after AAE filtering |
-| `--nsfw-threshold` | `0.5` | Min NSFW probability to keep a row |
-| `--nsfw-model` | `michellejieli/NSFW_text_classifier` | Any HF text-classification model with NSFW/SFW labels |
+| `--nsfw-threshold` | `0.5` | Min `sexual_explicit` probability to keep a row |
+| `--nsfw-model` | `unitary/unbiased-toxic-roberta` | Any HF multi-label moderation model exposing a `sexual_explicit` label |
 | `--ollama-model` | `llama3.3:70b` | Any pulled Ollama model. Use `llama3.1:8b` on laptops. |
 | `--translate-limit` | (none) | Cap on rows to translate; useful for smoke tests |
 
@@ -85,7 +89,7 @@ The final artefact is `data/03_paired.csv` with columns:
 |---|---|
 | `tweet_id` | Original TwitterAAE id |
 | `aae_prob` | Posterior probability the tweet is AAE |
-| `nsfw_score` | NSFW classifier score (0–1) |
+| `nsfw_score` | `sexual_explicit` probability from the moderation model (0–1) |
 | `aave_message` | Original AAVE text |
 | `sae_message` | LLM rewrite in SAE |
 

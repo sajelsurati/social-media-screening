@@ -43,7 +43,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--seed", type=int, default=42)
 
     # Detect stage
-    p.add_argument("--nsfw-model", default="michellejieli/NSFW_text_classifier")
+    p.add_argument("--nsfw-model", default="unitary/unbiased-toxic-roberta")
     p.add_argument("--nsfw-threshold", type=float, default=0.5)
     p.add_argument("--batch-size", type=int, default=32)
 

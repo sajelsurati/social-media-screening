@@ -1,11 +1,15 @@
 """Sexually-suggestive content classifier.
 
-Wraps a HuggingFace text classification model (default:
-`michellejieli/NSFW_text_classifier`) with batched inference and
-Apple Silicon (MPS) / CUDA / CPU device selection.
+Wraps a HuggingFace multi-label moderation model (default:
+`unitary/unbiased-toxic-roberta`, the Detoxify "unbiased" checkpoint)
+with batched inference and Apple Silicon (MPS) / CUDA / CPU device
+selection.
 
-The default model is a DistilBERT fine-tune that emits two labels:
-`NSFW` and `SFW`. We score `NSFW` probability per row.
+The default model emits independent sigmoid probabilities for seven
+labels (`toxicity`, `severe_toxicity`, `obscene`, `identity_attack`,
+`insult`, `threat`, `sexual_explicit`). We score the `sexual_explicit`
+label per row so that profanity / slurs alone do not flag a row —
+important when the input distribution is AAVE.
 """
 
 from __future__ import annotations
@@ -15,11 +19,11 @@ from typing import Iterable
 
 import pandas as pd
 import torch
-import torch.nn.functional as F
 from tqdm.auto import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-DEFAULT_MODEL = "michellejieli/NSFW_text_classifier"
+DEFAULT_MODEL = "unitary/unbiased-toxic-roberta"
+DEFAULT_TARGET_LABEL = "sexual_explicit"
 
 
 def _select_device() -> str:
@@ -33,6 +37,7 @@ def _select_device() -> str:
 @dataclass
 class ClassifierConfig:
     model_name: str = DEFAULT_MODEL
+    target_label: str = DEFAULT_TARGET_LABEL
     batch_size: int = 32
     max_length: int = 256
     device: str | None = None
@@ -47,15 +52,18 @@ class NSFWClassifier:
         self.model = AutoModelForSequenceClassification.from_pretrained(self.config.model_name)
         self.model.to(self.device)
         self.model.eval()
-        self._nsfw_idx = self._resolve_nsfw_label_index()
+        self._target_idx = self._resolve_target_label_index()
 
-    def _resolve_nsfw_label_index(self) -> int:
+    def _resolve_target_label_index(self) -> int:
         id2label = self.model.config.id2label
+        target = self.config.target_label.lower()
         for idx, label in id2label.items():
-            if str(label).upper().startswith("NSFW"):
+            if str(label).lower() == target:
                 return int(idx)
-        # Fall back to the last label if naming differs.
-        return len(id2label) - 1
+        raise ValueError(
+            f"Label {self.config.target_label!r} not found in model "
+            f"{self.config.model_name!r}. Available labels: {list(id2label.values())}"
+        )
 
     @torch.no_grad()
     def score(self, texts: Iterable[str]) -> list[float]:
@@ -71,7 +79,7 @@ class NSFWClassifier:
                 return_tensors="pt",
             ).to(self.device)
             logits = self.model(**enc).logits
-            probs = F.softmax(logits, dim=-1)[:, self._nsfw_idx]
+            probs = torch.sigmoid(logits)[:, self._target_idx]
             scores.extend(probs.detach().cpu().tolist())
         return scores
 
