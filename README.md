@@ -1,30 +1,23 @@
 # social-media-screening
 
-A three-stage pipeline that prepares a paired AAVE/SAE dataset of sexually
-suggestive content. The output is intended as input to an external
-content-moderation tool whose racial bias you want to audit.
+An experiment that screens line-aligned AAVE/SAE samples for sexually
+explicit content, producing a paired CSV intended as input to an
+external content-moderation tool whose racial bias you want to audit.
 
-## Pipeline
+## What it does
 
-```
-TwitterAAE corpus ──▶ [1] AAE filter ──▶ [2] NSFW detector ──▶ [3] AAVE→SAE rewrite ──▶ paired CSV
-```
+`local/screen_pairs.py`:
 
-1. **Load** — reads the TwitterAAE TSV (Blodgett et al. 2016), keeps rows with
-   high AAE posterior (default `>= 0.8`).
-2. **Detect** — runs a local multi-label moderation model (default:
-   [`unitary/unbiased-toxic-roberta`](https://huggingface.co/unitary/unbiased-toxic-roberta),
-   the Detoxify "unbiased" checkpoint) over the AAVE rows and keeps
-   those whose `sexual_explicit` probability is above the threshold.
-   Filtering on `sexual_explicit` specifically (rather than a combined
-   NSFW label) prevents profanity, slurs, and AAVE features from being
-   flagged on their own.
-3. **Translate** — rewrites each AAVE row into Standard American English with
-   a local LLM via [Ollama](https://ollama.com) (default: `llama3.3:70b`; use
-   `--ollama-model llama3.1:8b` on laptops). The prompt instructs the model to
-   preserve explicitness so the downstream moderation audit is valid.
-
-Each stage checkpoints to `data/` so you can resume.
+1. Reads two line-aligned text files (`local/aave_samples.txt` and
+   `local/sae_samples.txt`) of AAVE tweets and their SAE rewrites.
+2. Runs a local multi-label moderation model
+   ([`unitary/unbiased-toxic-roberta`](https://huggingface.co/unitary/unbiased-toxic-roberta),
+   the Detoxify "unbiased" checkpoint) over the AAVE lines.
+3. Filters on the model's `sexual_explicit` label — not a combined NSFW
+   label — so that profanity, slurs, or AAVE features alone do not flag
+   a row.
+4. Writes flagged rows to `local/results.csv` alongside their SAE
+   counterparts.
 
 ## Setup
 
@@ -34,76 +27,60 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Install and start Ollama, then pull the translation model:
+The first run downloads the Detoxify model (~500 MB) from HuggingFace
+into the local cache. Inference uses CUDA, Apple Silicon (MPS), or CPU,
+auto-selected in that order.
+
+## Run
 
 ```bash
-brew install ollama          # or download from ollama.com
-ollama serve &               # leave running
-
-# On an HPC GPU (≥ ~48 GB VRAM with 4-bit quant), use the 70B model:
-ollama pull llama3.3:70b
-
-# On a laptop or smaller GPU, fall back to the 8B model:
-ollama pull llama3.1:8b
+python local/screen_pairs.py
 ```
 
-The first run will also download the Detoxify moderation model (~500 MB) from
-HuggingFace into the local cache.
-
-## Usage
-
-Full pipeline on a sample of 5,000 rows:
-
-```bash
-python run_pipeline.py --input /path/to/twitteraae_all.tsv --sample 5000
-```
-
-Resume from a previous run (skip stages whose checkpoint already exists):
-
-```bash
-python run_pipeline.py --input /path/to/twitteraae_all.tsv --skip-existing
-```
-
-Run only specific stages (e.g., re-translate with a different Ollama model):
-
-```bash
-python run_pipeline.py --stages translate --ollama-model mistral:7b
-```
-
-Useful flags:
-
-| Flag | Default | Notes |
-|---|---|---|
-| `--aae-threshold` | `0.8` | Min posterior probability for the AAE topic |
-| `--sample` | (none) | Random subsample after AAE filtering |
-| `--nsfw-threshold` | `0.5` | Min `sexual_explicit` probability to keep a row |
-| `--nsfw-model` | `unitary/unbiased-toxic-roberta` | Any HF multi-label moderation model exposing a `sexual_explicit` label |
-| `--ollama-model` | `llama3.3:70b` | Any pulled Ollama model. Use `llama3.1:8b` on laptops. |
-| `--translate-limit` | (none) | Cap on rows to translate; useful for smoke tests |
+The script prints how many lines were scored and how many were kept.
 
 ## Output
 
-The final artefact is `data/03_paired.csv` with columns:
+`local/results.csv` columns:
 
 | column | description |
 |---|---|
-| `tweet_id` | Original TwitterAAE id |
-| `aae_prob` | Posterior probability the tweet is AAE |
+| `line_index` | 0-based line index in the input files |
 | `nsfw_score` | `sexual_explicit` probability from the moderation model (0–1) |
-| `aave_message` | Original AAVE text |
-| `sae_message` | LLM rewrite in SAE |
+| `aave_text` | Original AAVE line |
+| `sae_text` | SAE rewrite |
 
-Feed `aave_message` and `sae_message` into the external moderation tool you're
+Feed `aave_text` and `sae_text` into the external moderation tool you're
 auditing and compare flagging rates.
+
+## Configuration
+
+The threshold is set at the top of `local/screen_pairs.py`:
+
+```python
+NSFW_THRESHOLD = 0.5
+```
+
+The classifier model and target label are configured in
+`pipeline/nsfw_classifier.py` via `ClassifierConfig`:
+
+```python
+ClassifierConfig(
+    model_name="unitary/unbiased-toxic-roberta",
+    target_label="sexual_explicit",
+    nsfw_threshold=0.5,
+)
+```
+
+To use a different multi-label moderation model, pass a model name
+whose `id2label` contains the desired `target_label`.
 
 ## Notes
 
-- The NSFW classifier is trained on Reddit data and inherits its biases.
-  Manually spot-check the flagged rows before drawing conclusions about your
-  audit dataset.
-- The AAVE→SAE rewriter is an open LLM; rewrites should be spot-checked.
-  Even Llama 3.3 70B can flatten dialect features or introduce subtle
-  stereotypes (see Hofmann et al. 2024, *Dialect prejudice predicts AI
+- The moderation model inherits biases from its training data (Jigsaw
+  "Unintended Bias in Toxicity Classification"). Spot-check flagged
+  rows before drawing conclusions about the audit dataset.
+- For background on dialect bias in toxicity / hate-speech classifiers,
+  see Sap et al. 2019 (*The Risk of Racial Bias in Hate Speech
+  Detection*) and Hofmann et al. 2024 (*Dialect prejudice predicts AI
   decisions about people's character, employability, and criminality*).
-  For a publication-quality audit, have rewrites validated by fluent
-  AAVE speakers before drawing conclusions about the moderation tool.

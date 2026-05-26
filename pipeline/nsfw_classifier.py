@@ -17,9 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-import pandas as pd
 import torch
-from tqdm.auto import tqdm
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
 DEFAULT_MODEL = "unitary/unbiased-toxic-roberta"
@@ -82,23 +80,3 @@ class NSFWClassifier:
             probs = torch.sigmoid(logits)[:, self._target_idx]
             scores.extend(probs.detach().cpu().tolist())
         return scores
-
-    def classify_dataframe(
-        self,
-        df: pd.DataFrame,
-        text_column: str = "message",
-        show_progress: bool = True,
-    ) -> pd.DataFrame:
-        """Add `nsfw_score` and `is_nsfw` columns to `df`."""
-        texts = df[text_column].fillna("").astype(str).tolist()
-        all_scores: list[float] = []
-        iterator = range(0, len(texts), self.config.batch_size)
-        if show_progress:
-            iterator = tqdm(iterator, desc="NSFW scoring", unit="batch")
-        for start in iterator:
-            batch = texts[start : start + self.config.batch_size]
-            all_scores.extend(self.score(batch))
-        out = df.copy()
-        out["nsfw_score"] = all_scores
-        out["is_nsfw"] = out["nsfw_score"] >= self.config.nsfw_threshold
-        return out
