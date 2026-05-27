@@ -13,11 +13,13 @@ external content-moderation tool whose racial bias you want to audit.
 2. Runs a local multi-label moderation model
    ([`unitary/unbiased-toxic-roberta`](https://huggingface.co/unitary/unbiased-toxic-roberta),
    the Detoxify "unbiased" checkpoint) over the AAVE lines.
-3. Filters on the model's `sexual_explicit` label — not a combined NSFW
-   label — so that profanity, slurs, or AAVE features alone do not flag
-   a row.
-4. Writes flagged rows to `local/results.csv` alongside their SAE
-   counterparts.
+3. Filters on one Detoxify label at a time (default `sexual_explicit`;
+   pass `--label obscene` for profanity, or any other Detoxify label).
+   Filtering on a single label — rather than a combined NSFW score —
+   keeps profanity, slurs, and AAVE features from flagging a row on
+   the wrong axis.
+4. Writes flagged rows to `local/results_<label>.csv` alongside their
+   SAE counterparts.
 
 ## Setup
 
@@ -34,46 +36,28 @@ auto-selected in that order.
 ## Run
 
 ```bash
-python local/screen_pairs.py
+python local/screen_pairs.py                    # → local/results_sexual_explicit.csv
+python local/screen_pairs.py --label obscene    # → local/results_obscene.csv (profanity)
 ```
 
-The script prints how many lines were scored and how many were kept.
+`--threshold` (default `0.5`) sets the minimum label probability for a
+row to be kept. `--label` accepts any Detoxify label: `toxicity`,
+`severe_toxicity`, `obscene`, `identity_attack`, `insult`, `threat`,
+`sexual_explicit`.
 
 ## Output
 
-`local/results.csv` columns:
+`local/results_<label>.csv` columns:
 
 | column | description |
 |---|---|
 | `line_index` | 0-based line index in the input files |
-| `nsfw_score` | `sexual_explicit` probability from the moderation model (0–1) |
+| `<label>_score` | probability for the chosen Detoxify label (0–1) |
 | `aave_text` | Original AAVE line |
 | `sae_text` | SAE rewrite |
 
 Feed `aave_text` and `sae_text` into the external moderation tool you're
 auditing and compare flagging rates.
-
-## Configuration
-
-The threshold is set at the top of `local/screen_pairs.py`:
-
-```python
-NSFW_THRESHOLD = 0.5
-```
-
-The classifier model and target label are configured in
-`pipeline/nsfw_classifier.py` via `ClassifierConfig`:
-
-```python
-ClassifierConfig(
-    model_name="unitary/unbiased-toxic-roberta",
-    target_label="sexual_explicit",
-    nsfw_threshold=0.5,
-)
-```
-
-To use a different multi-label moderation model, pass a model name
-whose `id2label` contains the desired `target_label`.
 
 ## Notes
 
